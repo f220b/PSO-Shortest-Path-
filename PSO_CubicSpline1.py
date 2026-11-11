@@ -1,0 +1,281 @@
+import math
+import obstacles as ob
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.interpolate import CubicSpline
+
+
+def plot_circle(circle):  # plot the obstacles.
+    plt.gca().add_patch(
+        plt.Circle(
+            (circle.C.x, circle.C.y),
+            circle.r - 0.2,
+            edgecolor="black",
+            facecolor="grey",
+        )
+    )
+
+
+def plot_smooth_path(best_location):  # plot the spline.
+    X = [point[0] for point in best_location]
+    Y = [point[1] for point in best_location]
+
+    # Include start and end points in the spline
+    X = [START.x] + X + [END.x]
+    Y = [START.y] + Y + [END.y]
+
+    spline = CubicSpline(np.arange(len(X)), X)
+    smooth_X = spline(np.linspace(0, len(X) - 1, 100))
+
+    spline = CubicSpline(np.arange(len(Y)), Y)
+    smooth_Y = spline(np.linspace(0, len(Y) - 1, 100))
+
+    plt.plot(smooth_X, smooth_Y, "-g", label="Smooth Path")
+
+
+def plot_graph(best_location):
+    plt.close("all")
+    plt.figure(figsize=(5, 5))
+    plt.grid("on")
+    plt.rc("axes", axisbelow=True)
+    plt.scatter(END.x, END.y, 100, marker="o", facecolors="k", edgecolors="k")
+    plt.scatter(START.x, START.y, 100, marker="o", facecolors="k", edgecolors="k")
+
+    # Plot the smooth path directly
+    plot_smooth_path(best_location)
+
+    for i in range(DIM):
+        plt.scatter(
+            best_location[i][0],
+            best_location[i][1],
+            25,
+            marker="o",
+            facecolors="blue",
+            edgecolors="face",
+        )
+
+    plt.xlim(-1, 75)
+    plt.ylim(-1, 75)
+    plt.title("Particle Swarm Optimization")
+
+    # Calculate and print the length of the final path
+    path_length = 0
+    for i in range(DIM - 1):
+        dx = best_location[i + 1][0] - best_location[i][0]
+        dy = best_location[i + 1][1] - best_location[i][1]
+        path_length += math.sqrt(dx**2 + dy**2)
+
+    # Include the distance from the start to the first point
+    path_length += math.sqrt(
+        (best_location[0][0] - START.x) ** 2 + (best_location[0][1] - START.y) ** 2
+    )
+
+    # Include the distance from the last point to the goal
+    path_length += math.sqrt(
+        (best_location[DIM - 1][0] - END.x) ** 2
+        + (best_location[DIM - 1][1] - END.y) ** 2
+    )
+
+    print(f"Length of the final path: {path_length:.2f}")
+
+
+def random_initialization(swarm_size):  # random initialzatin of particles.
+    """
+    Random initializations of PSO particles location and velocity.
+
+    Parameters:
+        swarm_size (int): How many particles are present.
+
+    Returns:
+        List[List[float, float]]: List of starting coordinates of the particles, total number = swarm_size * DIM * 2.
+        List[float, float]: List of starting velocity of the particles, total number = swarm_size * DIM * 2.
+        List[floats]: Each particle best loss function result.
+        List[List[float, float]]: List of best velocity of the particles (there's only the starting in the initialization).
+        float: Best loss function result.
+        List[float, float]: The best location.
+    """
+
+    # set the location and velocity of the particle's
+    particles_loc = np.random.rand(swarm_size, DIM, 2) * 20
+    particles_vel = np.random.rand(swarm_size, DIM, 2)
+
+    # set the initial particle best location and value
+    particles_lowest_loss = [
+        loss_function(particles_loc[i, :, :]) for i in range(0, len(particles_loc))
+    ]
+    particles_best_location = np.copy(particles_loc)
+
+    # set the initial global best location and value
+    global_lowest_loss = np.min(particles_lowest_loss)
+    global_best_location = particles_loc[np.argmin(particles_lowest_loss)].copy()
+
+    return (
+        particles_loc,
+        particles_vel,
+        particles_lowest_loss,
+        particles_best_location,
+        global_lowest_loss,
+        global_best_location,
+    )
+
+
+def loss_function(x):  # fitness/objective function to find the shortest path.
+    # x = list of all the points in the path of the agent.
+    z = (x[0, 0] - START.x) ** 2 + (
+        x[0, 1] - START.y
+    ) ** 2  # distance b/w start and the 1st point.
+    for i in range(DIM - 1):  # distance b/w all the points between start and end.
+        z = z + ((x[i, 0] - x[i + 1, 0]) ** 2 + (x[i, 1] - x[i + 1, 1]) ** 2)
+    z = (
+        z + (x[DIM - 1, 0] - END.x) ** 2 + (x[DIM - 1, 1] - END.y) ** 2
+    )  # distance b/w the last point and the goal.
+    return math.sqrt(z)  # the entire distance of the path from start to end.
+
+
+def is_valid(circles, p):
+    """
+    Check if the point p is valid (i.e. doesn't go into obstacles).
+
+    Parameters:
+        circles (List[Obstacle_Circle]): The list of obstacles.
+        p (Point): The point to check.
+
+    Returns:
+        boolean: whether the point is valid
+    """
+    to_add = ob.Point(0, 0)
+    point_p = ob.Point(p[0], p[1])
+    for i in range(len(circles)):
+        if circles[i].inside_circle(point_p):
+            to_add = ob.Point(
+                circles[i].how_to_exit_x(point_p.x) + to_add.x,
+                circles[i].how_to_exit_y(point_p.y) + to_add.y,
+            )
+    return to_add
+
+
+def particle_swarm_optimization(
+    max_iterations, swarm_size, max_vel, step_size, inertia, c1, c2, circles
+):
+    """
+    Implementation of the Particle Swarm Optimization algorithm randomly.
+
+    Parameters:
+        max_iterations (int): The maximum number of iterations.
+        swarm_size (int): The number of particles.
+        max_vel (int): Maximum velocity for a particle.
+        step_size (int): The step size for updating each particle (how far a particle travels before its velocity is readjusted).
+        inertia (int): The inertia of a particle.
+        c1 (int): Factor for the particles local best.
+        c2 (int): Factor for the the global best.
+        circles (Obstacle_Circle): Obstacle of circular shape.
+
+    Returns:
+        boolean: the best path
+    """
+    (
+        particles_loc,
+        particles_vel,
+        particles_lowest_loss,
+        particles_best_location,
+        global_lowest_loss,
+        global_best_location,
+    ) = random_initialization(swarm_size)
+    best_location = []
+    print_iteration = 1
+
+    for iteration_i in range(max_iterations):
+        if iteration_i % 20 == 0:
+            print("%i%%" % int(iteration_i / max_iterations * 100))
+            print_iteration += 1
+        for particle_i in range(swarm_size):
+            dim_i = 0
+            while dim_i < DIM:
+                # update the velocity vector in a given dimension
+                error_particle_best = (
+                    particles_best_location[particle_i, dim_i]
+                    - particles_loc[particle_i, dim_i]
+                )
+                error_global_best = (
+                    global_best_location[dim_i] - particles_loc[particle_i, dim_i]
+                )
+                new_vel = (
+                    inertia
+                    * min(1, (dim_i ** (0.5)) / 4)
+                    * particles_vel[particle_i, dim_i]
+                    + c1 * np.random.rand(1) * error_particle_best
+                    + c2 * np.random.rand(1) * error_global_best
+                )
+
+                # bound a particle's velocity to the maximum value
+                if new_vel[0] < -max_vel:
+                    new_vel[0] = -max_vel
+                elif new_vel[0] > max_vel:
+                    new_vel[0] = max_vel
+                if new_vel[1] < -max_vel:
+                    new_vel[1] = -max_vel
+                elif new_vel[1] > max_vel:
+                    new_vel[1] = max_vel
+
+                # update the particle location and velocity
+                particles_loc[particle_i, dim_i] = (
+                    particles_loc[particle_i, dim_i] + new_vel[:] * step_size
+                )
+                particles_vel[particle_i, dim_i] = new_vel[:]
+
+                particle_help = is_valid(circles, particles_loc[particle_i, dim_i, :])
+                particles_loc[particle_i, dim_i, 0] += particle_help.x
+                particles_loc[particle_i, dim_i, 1] += particle_help.y
+                if abs(particle_help.x) > 0.1 or abs(particle_help.y) > 0.1:
+                    dim_i -= 1
+                dim_i += 1
+            # for the new location, check if this is a new local or global best (if it's valid)
+            particle_error = loss_function(particles_loc[particle_i, :])
+            if particle_error < particles_lowest_loss[particle_i]:  # local best
+                particles_lowest_loss[particle_i] = particle_error
+                particles_best_location[particle_i, :] = particles_loc[
+                    particle_i, :
+                ].copy()
+            if particle_error < global_lowest_loss:  # global best
+                global_lowest_loss = particle_error
+                global_best_location = particles_loc[particle_i, :].copy()
+
+        best_location = global_best_location.copy()
+    return best_location
+
+
+DIM = 19  # points to be considered in the final path, higher the number = better curves = higher computational compexity.
+START = ob.Point(0, 0)
+END = ob.Point(60, 60)
+
+
+def main():
+    print("Please wait:")
+    best_location = []  # for the plot
+
+    obstacle1 = ob.Obstacle_Circle(6, ob.Point(8, 10))
+    obstacle2 = ob.Obstacle_Circle(10.5, ob.Point(25, 20))
+    obstacle3 = ob.Obstacle_Circle(7.5, ob.Point(55, 50))
+    obstacle4 = ob.Obstacle_Circle(10, ob.Point(37, 40))
+
+    obstacles = [obstacle1, obstacle2, obstacle3, obstacle4]
+
+    best_location = particle_swarm_optimization(
+        max_iterations=2250,
+        swarm_size=150,
+        max_vel=3,
+        step_size=1,
+        inertia=0.9,
+        c1=2.05,
+        c2=2.05,
+        circles=obstacles,
+    )
+    print("100% completed!")
+    plot_graph(best_location)
+    for obstacle in obstacles:
+        plot_circle(obstacle)
+    plt.savefig("dim_22", dpi=300)
+    plt.show()
+
+
+main()
